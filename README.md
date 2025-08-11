@@ -226,7 +226,7 @@ python test_buy.py
 
 ---
 
-**⚡ 개선 버전 개발자**: [본인 GitHub ID]  
+**⚡ 개선 버전 개발자**: [G-hoon](https://github.com/G-hoon)
 **🙏 원작자**: [조코딩](https://github.com/youtube-jocoding)
 
 *이 프로젝트는 교육 목적으로 개발되었으며, 투자에 대한 책임은 사용자에게 있습니다.*
