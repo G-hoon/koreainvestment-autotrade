@@ -4,6 +4,10 @@ import datetime
 from pytz import timezone
 import time
 import yaml
+import statistics
+import math
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 with open('config.yaml', encoding='UTF-8') as f:
     _cfg = yaml.load(f, Loader=yaml.FullLoader)
@@ -15,11 +19,30 @@ ACNT_PRDT_CD = _cfg['ACNT_PRDT_CD']
 DISCORD_WEBHOOK_URL = _cfg['DISCORD_WEBHOOK_URL']
 URL_BASE = _cfg['URL_BASE']
 
+# HTTP 세션 및 재시도 설정
+session = requests.Session()
+retry_strategy = Retry(
+    total=3,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE", "POST"]
+)
+adapter = HTTPAdapter(max_retries=retry_strategy)
+session.mount("http://", adapter)
+session.mount("https://", adapter)
+
+# 매수 가격 및 트레일링 스탑 추적용 딕셔너리
+buy_prices = {}  # {종목코드: 매수가격}
+trailing_stops = {}  # {종목코드: 최고가}
+
 def send_message(msg):
     """디스코드 메세지 전송"""
     now = datetime.datetime.now()
     message = {"content": f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] {str(msg)}"}
-    requests.post(DISCORD_WEBHOOK_URL, data=message)
+    if DISCORD_WEBHOOK_URL:
+        try:
+            session.post(DISCORD_WEBHOOK_URL, data=message, timeout=10)
+        except Exception as e:
+            print(f"Discord 메시지 전송 실패: {e}")
     print(message)
 
 def get_access_token():
@@ -30,7 +53,7 @@ def get_access_token():
     "appsecret":APP_SECRET}
     PATH = "oauth2/tokenP"
     URL = f"{URL_BASE}/{PATH}"
-    res = requests.post(URL, headers=headers, data=json.dumps(body))
+    res = session.post(URL, headers=headers, data=json.dumps(body), timeout=30)
     ACCESS_TOKEN = res.json()["access_token"]
     return ACCESS_TOKEN
     
@@ -43,7 +66,7 @@ def hashkey(datas):
     'appKey' : APP_KEY,
     'appSecret' : APP_SECRET,
     }
-    res = requests.post(URL, headers=headers, data=json.dumps(datas))
+    res = session.post(URL, headers=headers, data=json.dumps(datas), timeout=30)
     hashkey = res.json()["HASH"]
     return hashkey
 
@@ -61,11 +84,66 @@ def get_current_price(market="NAS", code="AAPL"):
         "EXCD":market,
         "SYMB":code,
     }
-    res = requests.get(URL, headers=headers, params=params)
+    res = session.get(URL, headers=headers, params=params, timeout=30)
     return float(res.json()['output']['last'])
 
+def calculate_volatility(market="NAS", code="AAPL", days=20):
+    """최근 N일간의 변동성 계산 (수정된 최종 버전)"""
+    PATH = "uapi/overseas-price/v1/quotations/dailyprice"
+    URL = f"{URL_BASE}/{PATH}"
+    headers = {
+        "Content-Type": "application/json", 
+        "authorization": f"Bearer {ACCESS_TOKEN}",
+        "appKey": APP_KEY,
+        "appSecret": APP_SECRET,
+        "tr_id": "HHDFS76240000"
+    }
+    params = {
+        "AUTH": "",
+        "EXCD": market,
+        "SYMB": code,
+        "GUBN": "0",
+        "BYMD": "",
+        "MODP": "0"
+    }
+    
+    res = session.get(URL, headers=headers, params=params, timeout=30)
+    prices = res.json().get('output2', [])
+
+    if not prices:
+        send_message(f"[{code}] 일봉 데이터 조회 실패. 변동성 계산을 건너뜁니다.")
+        return 0.2
+
+    daily_returns = []
+    for i in range(min(days, len(prices)-1)):
+        try:
+            today_price_data = prices[i]
+            yesterday_price_data = prices[i+1]
+
+            # 'clos', 'last', 'base', 'close' 순서로 종가를 찾도록 수정
+            # 진단 결과 'clos'가 정확한 키 이름임을 확인했습니다.
+            today_close = float(today_price_data.get('clos', today_price_data.get('last', today_price_data.get('base', today_price_data.get('close', 0)))))
+            yesterday_close = float(yesterday_price_data.get('clos', yesterday_price_data.get('last', yesterday_price_data.get('base', yesterday_price_data.get('close', 0)))))
+            
+            if today_close == 0 or yesterday_close == 0:
+                continue
+
+            daily_return = (today_close - yesterday_close) / yesterday_close
+            daily_returns.append(daily_return)
+        except Exception as e:
+            send_message(f"[{code}] 변동성 계산 중 일부 데이터 오류: {e}")
+            continue
+    
+    if len(daily_returns) > 1:
+        volatility = statistics.stdev(daily_returns) * math.sqrt(252)
+        return volatility
+    
+    # 계산에 실패한 경우 기본값 반환
+    send_message(f"[{code}] 유효한 데이터 부족으로 변동성 계산 실패. 기본값을 사용합니다.")
+    return 0.2
+
 def get_target_price(market="NAS", code="AAPL"):
-    """변동성 돌파 전략으로 매수 목표가 조회"""
+    """동적 승수를 적용한 변동성 돌파 전략으로 매수 목표가 조회"""
     PATH = "uapi/overseas-price/v1/quotations/dailyprice"
     URL = f"{URL_BASE}/{PATH}"
     headers = {"Content-Type":"application/json", 
@@ -81,11 +159,30 @@ def get_target_price(market="NAS", code="AAPL"):
         "BYMD":"",
         "MODP":"0"
     }
-    res = requests.get(URL, headers=headers, params=params)
+    res = session.get(URL, headers=headers, params=params, timeout=30)
     stck_oprc = float(res.json()['output2'][0]['open']) #오늘 시가
     stck_hgpr = float(res.json()['output2'][1]['high']) #전일 고가
     stck_lwpr = float(res.json()['output2'][1]['low']) #전일 저가
-    target_price = stck_oprc + (stck_hgpr - stck_lwpr) * 0.5
+    
+    # 변동성 기반 동적 승수 계산
+    volatility = calculate_volatility(market, code, days=20)
+    
+    # 변동성에 따른 승수 조정
+    if volatility > 0.4:
+        multiplier = 0.3
+    elif volatility > 0.25:
+        multiplier = 0.5
+    else:
+        multiplier = 0.7
+    
+    target_price = stck_oprc + (stck_hgpr - stck_lwpr) * multiplier
+    
+    # <<< [수정] 아래 로직으로 변경 >>>
+    # 아직 이 종목의 목표가를 보낸 적이 없다면 메시지를 보내고 기록
+    if code not in target_price_message_sent:
+        send_message(f"{code} 변동성: {volatility:.2%}, 승수: {multiplier}, 목표가: ${target_price:.2f}")
+        target_price_message_sent.add(code) # 메시지를 보냈다고 기록
+    
     return target_price
 
 def get_stock_balance():
@@ -107,7 +204,7 @@ def get_stock_balance():
         "CTX_AREA_FK200": "",
         "CTX_AREA_NK200": ""
     }
-    res = requests.get(URL, headers=headers, params=params)
+    res = session.get(URL, headers=headers, params=params, timeout=30)
     stock_list = res.json()['output1']
     evaluation = res.json()['output2']
     stock_dict = {}
@@ -144,13 +241,13 @@ def get_balance():
         "CMA_EVLU_AMT_ICLD_YN": "Y",
         "OVRS_ICLD_YN": "Y"
     }
-    res = requests.get(URL, headers=headers, params=params)
+    res = session.get(URL, headers=headers, params=params, timeout=30)
     cash = res.json()['output']['ord_psbl_cash']
     send_message(f"주문 가능 현금 잔고: {cash}원")
     return int(cash)
 
 def buy(market="NASD", code="AAPL", qty="1", price="0"):
-    """미국 주식 지정가 매수"""
+    """미국 주식 시장가 매수"""
     PATH = "uapi/overseas-stock/v1/trading/order"
     URL = f"{URL_BASE}/{PATH}"
     data = {
@@ -158,29 +255,33 @@ def buy(market="NASD", code="AAPL", qty="1", price="0"):
         "ACNT_PRDT_CD": ACNT_PRDT_CD,
         "OVRS_EXCG_CD": market,
         "PDNO": code,
-        "ORD_DVSN": "00",
+        "ORD_DVSN": "00", # 해외주식 주문 구분 '00'이 지정가와 시장가 모두 포함 가능
         "ORD_QTY": str(int(qty)),
-        "OVRS_ORD_UNPR": f"{round(price,2)}",
+        "OVRS_ORD_UNPR": str(float(price)), # 시장가 주문이지만 현재가 입력
         "ORD_SVR_DVSN_CD": "0"
     }
     headers = {"Content-Type":"application/json", 
         "authorization":f"Bearer {ACCESS_TOKEN}",
         "appKey":APP_KEY,
         "appSecret":APP_SECRET,
-        "tr_id":"JTTT1002U",
+        "tr_id":"TTTT1002U",
         "custtype":"P",
         "hashkey" : hashkey(data)
     }
-    res = requests.post(URL, headers=headers, data=json.dumps(data))
+    res = session.post(URL, headers=headers, data=json.dumps(data), timeout=30)
     if res.json()['rt_cd'] == '0':
-        send_message(f"[매수 성공]{str(res.json())}")
+        # 매수 성공 시 매수 가격 저장 (실제 체결가는 아니지만 로직상 기록)
+        # 실제 체결가는 별도로 조회해야 가장 정확함
+        buy_prices[code] = price
+        trailing_stops[code] = price  # 트레일링 스탑 초기화
+        send_message(f"[매수 성공] {code}: 시장가 주문, 수량: {qty}, 기준가: ${price:.2f}")
         return True
     else:
         send_message(f"[매수 실패]{str(res.json())}")
         return False
 
 def sell(market="NASD", code="AAPL", qty="1", price="0"):
-    """미국 주식 지정가 매도"""
+    """미국 주식 시장가 매도"""
     PATH = "uapi/overseas-stock/v1/trading/order"
     URL = f"{URL_BASE}/{PATH}"
     data = {
@@ -190,24 +291,143 @@ def sell(market="NASD", code="AAPL", qty="1", price="0"):
         "PDNO": code,
         "ORD_DVSN": "00",
         "ORD_QTY": str(int(qty)),
-        "OVRS_ORD_UNPR": f"{round(price,2)}",
+        "OVRS_ORD_UNPR": str(float(price)), # 시장가 주문이지만 현재가 입력
         "ORD_SVR_DVSN_CD": "0"
     }
     headers = {"Content-Type":"application/json", 
         "authorization":f"Bearer {ACCESS_TOKEN}",
         "appKey":APP_KEY,
         "appSecret":APP_SECRET,
-        "tr_id":"JTTT1006U",
+        "tr_id":"TTTT1006U",
         "custtype":"P",
         "hashkey" : hashkey(data)
     }
-    res = requests.post(URL, headers=headers, data=json.dumps(data))
+    res = session.post(URL, headers=headers, data=json.dumps(data), timeout=30)
     if res.json()['rt_cd'] == '0':
-        send_message(f"[매도 성공]{str(res.json())}")
+        # 매도 성공 시 해당 종목의 기록 삭제
+        if code in buy_prices:
+            del buy_prices[code]
+        if code in trailing_stops:
+            del trailing_stops[code]
+        send_message(f"[매도 성공] {code}: 시장가 주문, 수량: {qty}, 기준가: ${price:.2f}")
         return True
     else:
         send_message(f"[매도 실패]{str(res.json())}")
         return False
+
+def check_stop_loss(code, current_price, stop_loss_pct=0.05):
+    """손절매 조건 확인"""
+    if code not in buy_prices:
+        return False
+    
+    buy_price = buy_prices[code]
+    stop_loss_price = buy_price * (1 - stop_loss_pct)
+    
+    if current_price <= stop_loss_price:
+        loss_pct = (current_price - buy_price) / buy_price
+        send_message(f"[손절매 신호] {code}: 매수가 ${buy_price:.2f} → 현재가 ${current_price:.2f} (손실 {loss_pct:.2%})")
+        return True
+    return False
+
+def check_take_profit(code, current_price, profit_pct=0.1):
+    """이익 실현 조건 확인"""
+    if code not in buy_prices:
+        return False
+    
+    buy_price = buy_prices[code]
+    take_profit_price = buy_price * (1 + profit_pct)
+    
+    if current_price >= take_profit_price:
+        profit_pct_actual = (current_price - buy_price) / buy_price
+        send_message(f"[이익실현 신호] {code}: 매수가 ${buy_price:.2f} → 현재가 ${current_price:.2f} (수익 {profit_pct_actual:.2%})")
+        return True
+    return False
+
+def update_trailing_stop(code, current_price):
+    """트레일링 스탑 업데이트"""
+    if code not in trailing_stops:
+        trailing_stops[code] = current_price
+    else:
+        # 현재가가 기록된 최고가보다 높으면 업데이트
+        if current_price > trailing_stops[code]:
+            trailing_stops[code] = current_price
+
+def check_trailing_stop(code, current_price, trailing_pct=0.02):
+    """트레일링 스탑 조건 확인"""
+    if code not in trailing_stops or code not in buy_prices:
+        return False
+    
+    highest_price = trailing_stops[code]
+    buy_price = buy_prices[code]
+    
+    # 매수가 대비 최소 2% 이상 수익이 있을 때만 트레일링 스탑 적용
+    if highest_price > buy_price * 1.02:
+        trailing_stop_price = highest_price * (1 - trailing_pct)
+        
+        if current_price <= trailing_stop_price:
+            profit_pct = (current_price - buy_price) / buy_price
+            send_message(f"[트레일링스탑] {code}: 최고가 ${highest_price:.2f} → 현재가 ${current_price:.2f} (수익 {profit_pct:.2%})")
+            return True
+    
+    return False
+
+def check_positions_for_risk_management(stock_dict, bought_list, nasd_symbol_list, nyse_symbol_list, amex_symbol_list):
+    """보유 종목들의 손절매/이익실현/트레일링스탑 조건 검사 (수정된 로직)"""
+    for code in list(bought_list):  # list()로 복사해서 순회 중 수정 방지
+        if code in buy_prices:
+            # 해당 종목의 시장 구분
+            market1 = "NASD"
+            market2 = "NAS"
+            if code in nyse_symbol_list:
+                market1 = "NYSE"
+                market2 = "NYS"
+            if code in amex_symbol_list:
+                market1 = "AMEX"
+                market2 = "AMS"
+            
+            try:
+                current_price = get_current_price(market2, code)
+                
+                # <<<< 로직 수정 파트 >>>>
+
+                # 1. 최고가(트레일링 스탑 기준)를 항상 업데이트
+                update_trailing_stop(code, current_price)
+                
+                # 2. 손절매는 최우선으로, 다른 조건보다 먼저 확인
+                if check_stop_loss(code, current_price, stop_loss_pct=0.02):
+                    if code in stock_dict:
+                        qty = stock_dict[code]
+                        if sell(market=market1, code=code, qty=qty, price=current_price):
+                            bought_list.remove(code)
+                            if code in stock_dict:
+                                del stock_dict[code]
+                        continue # 매도 후 다음 종목으로 넘어감
+                
+                # 3. 트레일링 스탑이 활성화된 경우 (2% 이상 수익), 트레일링 스탑으로만 매도 판단
+                if check_trailing_stop(code, current_price, trailing_pct=0.02):
+                    if code in stock_dict:
+                        qty = stock_dict[code]
+                        if sell(market=market1, code=code, qty=qty, price=current_price):
+                            bought_list.remove(code)
+                            if code in stock_dict:
+                                del stock_dict[code]
+                        continue # 매도 후 다음 종목으로 넘어감
+                
+                # 4. 트레일링 스탑이 활성화되지 않은 초기 수익 구간에서만 고정 익절 실행
+                elif check_take_profit(code, current_price, profit_pct=0.03):
+                    if code in stock_dict:
+                        qty = stock_dict[code]
+                        if sell(market=market1, code=code, qty=qty, price=current_price):
+                            bought_list.remove(code)
+                            if code in stock_dict:
+                                del stock_dict[code]
+                        continue # 매도 후 다음 종목으로 넘어감
+                
+                # <<<< 로직 수정 종료 >>>>
+                            
+            except Exception as e:
+                send_message(f"[위험관리 오류] {code}: {str(e)}")
+                time.sleep(1)
 
 def get_exchange_rate():
     """환율 조회"""
@@ -227,7 +447,7 @@ def get_exchange_rate():
         "TR_MKET_CD": "01",
         "INQR_DVSN_CD": "00"
     }
-    res = requests.get(URL, headers=headers, params=params)
+    res = session.get(URL, headers=headers, params=params, timeout=30)
     exchange_rate = 1270.0
     if len(res.json()['output2']) > 0:
         exchange_rate = float(res.json()['output2'][0]['frst_bltn_exrt'])
@@ -237,22 +457,28 @@ def get_exchange_rate():
 try:
     ACCESS_TOKEN = get_access_token()
 
-    nasd_symbol_list = ["AAPL"] # 매수 희망 종목 리스트 (NASD)
-    nyse_symbol_list = ["KO"] # 매수 희망 종목 리스트 (NYSE)
-    amex_symbol_list = ["LIT"] # 매수 희망 종목 리스트 (AMEX)
+    nasd_symbol_list = ["PLTR", "AVGO", "LRCX", "NVDA", "AAPL", "MU", "LYFT", "MSFT"] # 매수 희망 종목 리스트 (NASD)
+    nyse_symbol_list = [] 
+    amex_symbol_list = [] 
     symbol_list = nasd_symbol_list + nyse_symbol_list + amex_symbol_list
+    
     bought_list = [] # 매수 완료된 종목 리스트
+    target_price_message_sent = set() # <<< [추가] 목표가 메시지를 보냈는지 기록하는 용도
+
     total_cash = get_balance() # 보유 현금 조회
     exchange_rate = get_exchange_rate() # 환율 조회
     stock_dict = get_stock_balance() # 보유 주식 조회
     for sym in stock_dict.keys():
         bought_list.append(sym)
-    target_buy_count = 3 # 매수할 종목 수
-    buy_percent = 0.33 # 종목당 매수 금액 비율
+    target_buy_count = 4 # 매수할 종목 수
+    buy_percent = 0.25 # 종목당 매수 금액 비율
     buy_amount = total_cash * buy_percent / exchange_rate # 종목별 주문 금액 계산 (달러)
     soldout = False
 
     send_message("===해외 주식 자동매매 프로그램을 시작합니다===")
+    send_message(f"목표 매수 종목 수: {target_buy_count}, 종목당 투자 비율: {buy_percent:.0%}")
+    send_message(f"위험관리: 손절매 -5%, 이익실현 +10%, 트레일링스탑 -2%")
+    
     while True:
         t_now = datetime.datetime.now(timezone('America/New_York')) # 뉴욕 기준 현재 시간
         t_9 = t_now.replace(hour=9, minute=30, second=0, microsecond=0)
@@ -260,9 +486,11 @@ try:
         t_sell = t_now.replace(hour=15, minute=45, second=0, microsecond=0)
         t_exit = t_now.replace(hour=15, minute=50, second=0,microsecond=0)
         today = t_now.weekday()
+        
         if today == 5 or today == 6:  # 토요일이나 일요일이면 자동 종료
             send_message("주말이므로 프로그램을 종료합니다.")
             break
+            
         if t_9 < t_now < t_start and soldout == False: # 잔여 수량 매도
             for sym, qty in stock_dict.items():
                 market1 = "NASD"
@@ -274,11 +502,16 @@ try:
                     market1 = "AMEX"
                     market2 = "AMS"
                 sell(market=market1, code=sym, qty=qty, price=get_current_price(market=market2, code=sym))
-            soldout == True
+            soldout = True
             bought_list = []
             time.sleep(1)
             stock_dict = get_stock_balance()
-        if t_start < t_now < t_sell :  # AM 09:35 ~ PM 03:45 : 매수
+            
+        if t_start < t_now < t_sell:  # AM 09:35 ~ PM 03:45 : 매수 및 위험관리
+            # 1. 기존 포지션 위험관리 (손절/익절/트레일링스탑)
+            check_positions_for_risk_management(stock_dict, bought_list, nasd_symbol_list, nyse_symbol_list, amex_symbol_list)
+            
+            # 2. 새로운 매수 기회 탐색
             for sym in symbol_list:
                 if len(bought_list) < target_buy_count:
                     if sym in bought_list:
@@ -291,29 +524,35 @@ try:
                     if sym in amex_symbol_list:
                         market1 = "AMEX"
                         market2 = "AMS"
-                    target_price = get_target_price(market2, sym)
-                    current_price = get_current_price(market2, sym)
-                    if target_price < current_price:
-                        buy_qty = 0  # 매수할 수량 초기화
-                        buy_qty = int(buy_amount // current_price)
-                        if buy_qty > 0:
-                            send_message(f"{sym} 목표가 달성({target_price} < {current_price}) 매수를 시도합니다.")
-                            market = "NASD"
-                            if sym in nyse_symbol_list:
-                                market = "NYSE"
-                            if sym in amex_symbol_list:
-                                market = "AMEX"
-                            result = buy(market=market1, code=sym, qty=buy_qty, price=get_current_price(market=market2, code=sym))
-                            time.sleep(1)
-                            if result:
-                                soldout = False
-                                bought_list.append(sym)
-                                get_stock_balance()
-                    time.sleep(1)
-            time.sleep(1)
-            if t_now.minute == 30 and t_now.second <= 5: 
+                    
+                    try:
+                        # 동적 목표가 계산 적용
+                        target_price = get_target_price(market2, sym)
+                        current_price = get_current_price(market2, sym)
+                        
+                        if target_price < current_price:
+                            buy_qty = 0  # 매수할 수량 초기화
+                            buy_qty = int(buy_amount // current_price)
+                            if buy_qty > 0:
+                                send_message(f"{sym} 목표가 달성({target_price:.2f} < {current_price:.2f}) 매수를 시도합니다.")
+                                # 시장가 매수를 위해 price 에는 체결 기준용 현재가를 넘겨줌
+                                result = buy(market=market1, code=sym, qty=buy_qty, price=current_price) 
+                                time.sleep(1)
+                                if result:
+                                    soldout = False
+                                    bought_list.append(sym)
+                                    get_stock_balance()
+                    except Exception as e:
+                        send_message(f"[매수 시도 오류] {sym}: {str(e)}")
+                        time.sleep(5)  # 오류 시 더 긴 대기시간
+                        
+            time.sleep(10)  # 10초마다 체크
+            
+            # 30분마다 잔고 확인
+            if t_now.minute == 30 and t_now.second <= 10: 
                 get_stock_balance()
                 time.sleep(5)
+                
         if t_sell < t_now < t_exit:  # PM 03:45 ~ PM 03:50 : 일괄 매도
             if soldout == False:
                 stock_dict = get_stock_balance()
@@ -326,13 +565,18 @@ try:
                     if sym in amex_symbol_list:
                         market1 = "AMEX"
                         market2 = "AMS"
+                    # 시장가 매도를 위해 price 에는 참고용 현재가를 넘겨줌
                     sell(market=market1, code=sym, qty=qty, price=get_current_price(market=market2, code=sym))
                 soldout = True
                 bought_list = []
                 time.sleep(1)
+                
         if t_exit < t_now:  # PM 03:50 ~ :프로그램 종료
             send_message("프로그램을 종료합니다.")
             break
+            
+        time.sleep(5)  # 5초 대기
+        
 except Exception as e:
     send_message(f"[오류 발생]{e}")
     time.sleep(1)

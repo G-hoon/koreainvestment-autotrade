@@ -18,7 +18,8 @@ def send_message(msg):
     """디스코드 메세지 전송"""
     now = datetime.datetime.now()
     message = {"content": f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] {str(msg)}"}
-    requests.post(DISCORD_WEBHOOK_URL, data=message)
+    if DISCORD_WEBHOOK_URL:
+        requests.post(DISCORD_WEBHOOK_URL, data=message)
     print(message)
 
 def get_access_token():
@@ -237,7 +238,7 @@ try:
         if t_9 < t_now < t_start and soldout == False: # 잔여 수량 매도
             for sym, qty in stock_dict.items():
                 sell(sym, qty)
-            soldout == True
+            soldout = True
             bought_list = []
             stock_dict = get_stock_balance()
         if t_start < t_now < t_sell :  # AM 09:05 ~ PM 03:15 : 매수

@@ -1,0 +1,23 @@
+# 한국투자증권 OpenAPI 설정 파일
+# 이 파일을 config.yaml로 복사하고 실제 값을 입력하세요
+
+# 한국투자증권 OpenAPI 키 (필수)
+APP_KEY: "your_app_key_here"
+APP_SECRET: "your_app_secret_here"
+
+# 계좌 정보 (필수)
+CANO: "your_account_number_here"          # 계좌번호
+ACNT_PRDT_CD: "your_product_code_here"    # 상품코드 (보통 "01")
+
+# Discord 웹훅 URL (선택사항 - 알림을 받으려면 설정)
+DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/your_webhook_url_here"
+
+# API 서버 URL (변경하지 마세요)
+URL_BASE: "https://openapi.koreainvestment.com:9443"
+
+# 설정 가이드:
+# 1. 한국투자증권 홈페이지에서 OpenAPI 신청
+# 2. APP_KEY, APP_SECRET 발급받아 입력
+# 3. 계좌번호(CANO)와 상품코드(ACNT_PRDT_CD) 입력
+# 4. Discord 알림을 원하면 웹훅 URL 설정
+# 5. 파일명을 config.yaml로 변경

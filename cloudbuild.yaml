@@ -1,0 +1,19 @@
+steps:
+  # Docker 이미지 빌드
+  - name: 'gcr.io/cloud-builders/docker'
+    args: 
+      - 'build'
+      - '-f'
+      - 'Dockerfile.gcp'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/koreainvestment-autotrade'
+      - '.'
+  
+  # Container Registry에 푸시
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/koreainvestment-autotrade'
+
+images:
+  - 'gcr.io/$PROJECT_ID/koreainvestment-autotrade'
