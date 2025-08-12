@@ -55,44 +55,60 @@ jobs:
         echo "📄 파일 목록:"
         ls -la
         
-        # test_env.py 파일이 있는지 확인
-        if [ -f "test_env.py" ]; then
-          echo "✅ test_env.py 파일 존재 - 환경변수 테스트 실행"
-          python test_env.py
+        # 환경변수 간단 검증 실행
+        echo "🔍 환경변수 간단 검증"
+        echo "====================================="
+        
+        # 필수 환경변수 체크
+        ENV_OK=true
+        
+        if [ -n "$APP_KEY" ]; then
+          echo "✅ APP_KEY: 설정됨 (길이: ${#APP_KEY}자)"
         else
-          echo "⚠️ test_env.py 파일 없음 - 간단한 환경변수 검증 실행"
-          python -c "
-import os
-import sys
-
-print('🔍 환경변수 간단 검증')
-print('=' * 40)
-
-vars_to_check = ['APP_KEY', 'APP_SECRET', 'CANO', 'ACNT_PRDT_CD', 'URL_BASE']
-optional_vars = ['DISCORD_WEBHOOK_URL']
-
-all_set = True
-for var in vars_to_check:
-    value = os.getenv(var)
-    if value:
-        print(f'✅ {var}: 설정됨 (길이: {len(value)}자)')
-    else:
-        print(f'❌ {var}: 설정되지 않음')
-        all_set = False
-
-for var in optional_vars:
-    value = os.getenv(var)
-    if value:
-        print(f'✅ {var}: 설정됨 (길이: {len(value)}자)')
-    else:
-        print(f'⚠️  {var}: 설정되지 않음 (선택사항)')
-
-if all_set:
-    print('🎉 필수 환경변수 모두 설정됨!')
-else:
-    print('❌ 필수 환경변수 누락')
-    sys.exit(1)
-"
+          echo "❌ APP_KEY: 설정되지 않음"
+          ENV_OK=false
+        fi
+        
+        if [ -n "$APP_SECRET" ]; then
+          echo "✅ APP_SECRET: 설정됨 (길이: ${#APP_SECRET}자)"
+        else
+          echo "❌ APP_SECRET: 설정되지 않음"
+          ENV_OK=false
+        fi
+        
+        if [ -n "$CANO" ]; then
+          echo "✅ CANO: 설정됨 (길이: ${#CANO}자)"
+        else
+          echo "❌ CANO: 설정되지 않음"
+          ENV_OK=false
+        fi
+        
+        if [ -n "$ACNT_PRDT_CD" ]; then
+          echo "✅ ACNT_PRDT_CD: 설정됨 (길이: ${#ACNT_PRDT_CD}자)"
+        else
+          echo "❌ ACNT_PRDT_CD: 설정되지 않음"
+          ENV_OK=false
+        fi
+        
+        if [ -n "$URL_BASE" ]; then
+          echo "✅ URL_BASE: 설정됨 (길이: ${#URL_BASE}자)"
+        else
+          echo "❌ URL_BASE: 설정되지 않음"
+          ENV_OK=false
+        fi
+        
+        # 선택적 환경변수
+        if [ -n "$DISCORD_WEBHOOK_URL" ]; then
+          echo "✅ DISCORD_WEBHOOK_URL: 설정됨 (길이: ${#DISCORD_WEBHOOK_URL}자)"
+        else
+          echo "⚠️  DISCORD_WEBHOOK_URL: 설정되지 않음 (선택사항)"
+        fi
+        
+        if [ "$ENV_OK" = true ]; then
+          echo "🎉 필수 환경변수 모두 설정됨!"
+        else
+          echo "❌ 필수 환경변수 누락"
+          exit 1
         fi
         
     - name: Debug environment variables
