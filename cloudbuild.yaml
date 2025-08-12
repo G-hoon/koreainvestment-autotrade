@@ -6,14 +6,14 @@ steps:
       - '-f'
       - 'Dockerfile.gcp'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/koreainvestment-autotrade'
+      - 'gcr.io/${_PROJECT_ID}/koreainvestment-autotrade'
       - '.'
   
   # Container Registry에 푸시
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'gcr.io/$PROJECT_ID/koreainvestment-autotrade'
+      - 'gcr.io/${_PROJECT_ID}/koreainvestment-autotrade'
 
 images:
-  - 'gcr.io/$PROJECT_ID/koreainvestment-autotrade'
+  - 'gcr.io/${_PROJECT_ID}/koreainvestment-autotrade'

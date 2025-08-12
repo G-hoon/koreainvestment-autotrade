@@ -185,6 +185,9 @@ jobs:
           --config cloudbuild.yaml \
           --substitutions _PROJECT_ID=$PROJECT_ID \
           --timeout=20m
+          
+        echo "✅ Docker 이미지 빌드 및 푸시 완료"
+        echo "📦 이미지: gcr.io/$PROJECT_ID/koreainvestment-autotrade"
 
     - name: Deploy to Cloud Run
       run: |
