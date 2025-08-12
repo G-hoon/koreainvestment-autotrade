@@ -21,9 +21,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 애플리케이션 파일 복사
 COPY UsaStockAutoTrade.py .
 
-# Cloud Run에서는 config.yaml을 환경변수나 Secret으로 관리하는 것이 좋습니다
-# 하지만 우선은 파일로 복사
-COPY config.yaml .
+# config.yaml은 선택적으로 복사 (환경변수가 우선)
+COPY config.yaml* ./
 
 # Cloud Run용 헬스체크 엔드포인트 추가를 위한 래퍼 스크립트
 COPY start.py .

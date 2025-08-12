@@ -6,11 +6,37 @@ import time
 import yaml
 import statistics
 import math
+import os
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-with open('config.yaml', encoding='UTF-8') as f:
-    _cfg = yaml.load(f, Loader=yaml.FullLoader)
+# 환경변수 우선, config.yaml 파일을 백업으로 사용
+def load_config():
+    """환경변수나 config.yaml에서 설정 로드"""
+    config = {}
+    
+    # 환경변수에서 우선 로드
+    if os.getenv('APP_KEY'):
+        config['APP_KEY'] = os.getenv('APP_KEY')
+        config['APP_SECRET'] = os.getenv('APP_SECRET')
+        config['CANO'] = os.getenv('CANO')
+        config['ACNT_PRDT_CD'] = os.getenv('ACNT_PRDT_CD')
+        config['DISCORD_WEBHOOK_URL'] = os.getenv('DISCORD_WEBHOOK_URL')
+        config['URL_BASE'] = os.getenv('URL_BASE', 'https://openapi.koreainvestment.com:9443')
+        print("✅ 환경변수에서 설정을 로드했습니다.")
+    else:
+        # config.yaml 파일에서 로드 (로컬 개발용)
+        try:
+            with open('config.yaml', encoding='UTF-8') as f:
+                config = yaml.load(f, Loader=yaml.FullLoader)
+            print("✅ config.yaml 파일에서 설정을 로드했습니다.")
+        except FileNotFoundError:
+            print("❌ config.yaml 파일이 없고 환경변수도 설정되지 않았습니다.")
+            raise Exception("설정 파일이나 환경변수가 필요합니다.")
+    
+    return config
+
+_cfg = load_config()
 APP_KEY = _cfg['APP_KEY']
 APP_SECRET = _cfg['APP_SECRET']
 ACCESS_TOKEN = ""
@@ -34,11 +60,16 @@ session.mount("https://", adapter)
 buy_prices = {}  # {종목코드: 매수가격}
 trailing_stops = {}  # {종목코드: 최고가}
 
-def send_message(msg):
+def send_message(msg, force_discord=False):
     """디스코드 메세지 전송"""
     now = datetime.datetime.now()
     message = {"content": f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] {str(msg)}"}
-    if DISCORD_WEBHOOK_URL:
+    
+    # 매수/매도 관련 메시지만 Discord로 전송 (force_discord=True인 경우 예외)
+    is_trading_message = any(keyword in str(msg) for keyword in 
+                           ["매수 성공", "매도 성공", "손절매 신호", "이익실현 신호", "트레일링스탑"])
+    
+    if DISCORD_WEBHOOK_URL and (is_trading_message or force_discord):
         try:
             session.post(DISCORD_WEBHOOK_URL, data=message, timeout=10)
         except Exception as e:
@@ -180,7 +211,7 @@ def get_target_price(market="NAS", code="AAPL"):
     # <<< [수정] 아래 로직으로 변경 >>>
     # 아직 이 종목의 목표가를 보낸 적이 없다면 메시지를 보내고 기록
     if code not in target_price_message_sent:
-        send_message(f"{code} 변동성: {volatility:.2%}, 승수: {multiplier}, 목표가: ${target_price:.2f}")
+        send_message(f"{code} 변동성: {volatility:.2%}, 승수: {multiplier}, 목표가: ${target_price:.2f}", force_discord=True)
         target_price_message_sent.add(code) # 메시지를 보냈다고 기록
     
     return target_price
@@ -453,6 +484,22 @@ def get_exchange_rate():
         exchange_rate = float(res.json()['output2'][0]['frst_bltn_exrt'])
     return exchange_rate
 
+# 장시간 체크 함수
+def is_market_open():
+    """미국 주식 시장 개장 시간 체크"""
+    t_now = datetime.datetime.now(timezone('America/New_York'))
+    today = t_now.weekday()
+    
+    # 주말이면 휴장
+    if today == 5 or today == 6:  # 토요일, 일요일
+        return False
+    
+    # 평일 9:30 ~ 16:00 (EST) 개장
+    market_open = t_now.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = t_now.replace(hour=16, minute=0, second=0, microsecond=0)
+    
+    return market_open <= t_now <= market_close
+
 # 자동매매 시작
 try:
     ACCESS_TOKEN = get_access_token()
@@ -464,6 +511,12 @@ try:
     
     bought_list = [] # 매수 완료된 종목 리스트
     target_price_message_sent = set() # <<< [추가] 목표가 메시지를 보냈는지 기록하는 용도
+    daily_message_sent = False  # 일일 초기 메시지 전송 여부
+
+    # 장시간이 아니면 프로그램 종료
+    if not is_market_open():
+        send_message("현재 장시간이 아닙니다. 프로그램을 종료합니다.", force_discord=True)
+        exit()
 
     total_cash = get_balance() # 보유 현금 조회
     exchange_rate = get_exchange_rate() # 환율 조회
@@ -475,9 +528,26 @@ try:
     buy_amount = total_cash * buy_percent / exchange_rate # 종목별 주문 금액 계산 (달러)
     soldout = False
 
-    send_message("===해외 주식 자동매매 프로그램을 시작합니다===")
-    send_message(f"목표 매수 종목 수: {target_buy_count}, 종목당 투자 비율: {buy_percent:.0%}")
-    send_message(f"위험관리: 손절매 -5%, 이익실현 +10%, 트레일링스탑 -2%")
+    # 초기 메시지는 한 번만 전송 (Discord에도 전송)
+    if not daily_message_sent:
+        send_message("===해외 주식 자동매매 프로그램을 시작합니다===", force_discord=True)
+        send_message(f"목표 매수 종목 수: {target_buy_count}, 종목당 투자 비율: {buy_percent:.0%}", force_discord=True)
+        send_message(f"위험관리: 손절매 -5%, 이익실현 +10%, 트레일링스탑 -2%", force_discord=True)
+        
+        # 모든 종목의 목표가를 한 번에 계산하고 메시지 전송
+        for sym in symbol_list:
+            market2 = "NAS"
+            if sym in nyse_symbol_list:
+                market2 = "NYS"
+            if sym in amex_symbol_list:
+                market2 = "AMS"
+            try:
+                target_price = get_target_price(market2, sym)
+                # get_target_price 내부에서 목표가 메시지가 전송됨
+            except Exception as e:
+                send_message(f"[목표가 계산 오류] {sym}: {str(e)}")
+        
+        daily_message_sent = True
     
     while True:
         t_now = datetime.datetime.now(timezone('America/New_York')) # 뉴욕 기준 현재 시간
@@ -487,8 +557,9 @@ try:
         t_exit = t_now.replace(hour=15, minute=50, second=0,microsecond=0)
         today = t_now.weekday()
         
-        if today == 5 or today == 6:  # 토요일이나 일요일이면 자동 종료
-            send_message("주말이므로 프로그램을 종료합니다.")
+        # 장시간이 아니면 프로그램 종료
+        if not is_market_open():
+            send_message("장시간이 종료되어 프로그램을 종료합니다.", force_discord=True)
             break
             
         if t_9 < t_now < t_start and soldout == False: # 잔여 수량 매도
@@ -572,7 +643,7 @@ try:
                 time.sleep(1)
                 
         if t_exit < t_now:  # PM 03:50 ~ :프로그램 종료
-            send_message("프로그램을 종료합니다.")
+            send_message("프로그램을 종료합니다.", force_discord=True)
             break
             
         time.sleep(5)  # 5초 대기

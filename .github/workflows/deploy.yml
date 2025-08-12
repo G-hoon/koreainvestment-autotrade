@@ -1,0 +1,94 @@
+name: Deploy to Google Cloud Run
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SERVICE_NAME: koreainvestment-autotrade
+  REGION: asia-northeast3
+
+jobs:
+  deploy:
+    name: Deploy to Cloud Run
+    runs-on: ubuntu-latest
+    
+    # main 브랜치에 push될 때만 배포 실행
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Google Cloud CLI
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+    - name: Configure Docker to use gcloud as a credential helper
+      run: |
+        gcloud auth configure-docker
+
+    - name: Build and push Docker image
+      run: |
+        # Docker 이미지 빌드 및 푸시
+        gcloud builds submit \
+          --config cloudbuild.yaml \
+          --substitutions _PROJECT_ID=$PROJECT_ID
+
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy $SERVICE_NAME \
+          --image gcr.io/$PROJECT_ID/$SERVICE_NAME \
+          --region $REGION \
+          --platform managed \
+          --allow-unauthenticated \
+          --memory 512Mi \
+          --cpu 1 \
+          --timeout 3600 \
+          --concurrency 1 \
+          --min-instances 0 \
+          --max-instances 1 \
+          --set-env-vars "TZ=Asia/Seoul" \
+          --set-env-vars "APP_KEY=${{ secrets.APP_KEY }}" \
+          --set-env-vars "APP_SECRET=${{ secrets.APP_SECRET }}" \
+          --set-env-vars "CANO=${{ secrets.CANO }}" \
+          --set-env-vars "ACNT_PRDT_CD=${{ secrets.ACNT_PRDT_CD }}" \
+          --set-env-vars "DISCORD_WEBHOOK_URL=${{ secrets.DISCORD_WEBHOOK_URL }}" \
+          --set-env-vars "URL_BASE=https://openapi.koreainvestment.com:9443" \
+          --port 8080
+
+    - name: Get service URL
+      run: |
+        SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format="value(status.url)")
+        echo "🚀 배포 완료!"
+        echo "📊 서비스 URL: $SERVICE_URL"
+        echo "🔍 헬스체크: $SERVICE_URL/health"
+
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Run syntax check
+      run: |
+        python -m py_compile UsaStockAutoTrade.py
+        python -m py_compile start.py
+        echo "✅ 문법 검사 통과"
