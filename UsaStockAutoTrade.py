@@ -11,28 +11,73 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # 환경변수 우선, config.yaml 파일을 백업으로 사용
+def validate_config_value(key, value, expected_type=str, min_length=None, max_length=None):
+    """설정값 유효성 검증"""
+    if not value:
+        raise ValueError(f"❌ {key}가 설정되지 않았습니다.")
+    
+    if not isinstance(value, expected_type):
+        raise ValueError(f"❌ {key}의 타입이 올바르지 않습니다. 예상: {expected_type}, 실제: {type(value)}")
+    
+    if min_length and len(str(value)) < min_length:
+        raise ValueError(f"❌ {key}의 길이가 너무 짧습니다. 최소 {min_length}자 필요, 현재: {len(str(value))}자")
+    
+    if max_length and len(str(value)) > max_length:
+        raise ValueError(f"❌ {key}의 길이가 너무 깁니다. 최대 {max_length}자, 현재: {len(str(value))}자")
+    
+    print(f"✅ {key}: 검증 완료 (길이: {len(str(value))}자)")
+
 def load_config():
-    """환경변수나 config.yaml에서 설정 로드"""
+    """환경변수나 config.yaml에서 설정 로드 및 검증"""
     config = {}
+    config_source = ""
     
     # 환경변수에서 우선 로드
     if os.getenv('APP_KEY'):
+        print("🔍 환경변수에서 설정을 로드하는 중...")
         config['APP_KEY'] = os.getenv('APP_KEY')
         config['APP_SECRET'] = os.getenv('APP_SECRET')
         config['CANO'] = os.getenv('CANO')
         config['ACNT_PRDT_CD'] = os.getenv('ACNT_PRDT_CD')
         config['DISCORD_WEBHOOK_URL'] = os.getenv('DISCORD_WEBHOOK_URL')
         config['URL_BASE'] = os.getenv('URL_BASE', 'https://openapi.koreainvestment.com:9443')
-        print("✅ 환경변수에서 설정을 로드했습니다.")
+        config_source = "환경변수"
     else:
         # config.yaml 파일에서 로드 (로컬 개발용)
         try:
+            print("🔍 config.yaml 파일에서 설정을 로드하는 중...")
             with open('config.yaml', encoding='UTF-8') as f:
                 config = yaml.load(f, Loader=yaml.FullLoader)
-            print("✅ config.yaml 파일에서 설정을 로드했습니다.")
+            config_source = "config.yaml 파일"
         except FileNotFoundError:
             print("❌ config.yaml 파일이 없고 환경변수도 설정되지 않았습니다.")
             raise Exception("설정 파일이나 환경변수가 필요합니다.")
+    
+    # 설정값 검증
+    print(f"🔑 {config_source}에서 로드한 설정을 검증하는 중...")
+    try:
+        validate_config_value('APP_KEY', config.get('APP_KEY'), str, 20, 50)
+        validate_config_value('APP_SECRET', config.get('APP_SECRET'), str, 30, 100)
+        validate_config_value('CANO', config.get('CANO'), str, 8, 15)
+        validate_config_value('ACNT_PRDT_CD', config.get('ACNT_PRDT_CD'), str, 2, 5)
+        validate_config_value('URL_BASE', config.get('URL_BASE'), str, 10, 100)
+        
+        # DISCORD_WEBHOOK_URL은 선택사항
+        if config.get('DISCORD_WEBHOOK_URL'):
+            validate_config_value('DISCORD_WEBHOOK_URL', config.get('DISCORD_WEBHOOK_URL'), str, 50, 200)
+            print("✅ DISCORD_WEBHOOK_URL: 설정됨")
+        else:
+            print("⚠️  DISCORD_WEBHOOK_URL: 설정되지 않음 (Discord 알림 비활성화)")
+        
+        print(f"✅ 모든 설정이 {config_source}에서 성공적으로 로드되고 검증되었습니다.")
+        
+    except ValueError as e:
+        print(f"❌ 설정 검증 실패: {e}")
+        print("\n🔧 설정 문제 해결 방법:")
+        print("1. GitHub Secrets (리포지토리 > Settings > Secrets and variables > Actions)에서 값 확인")
+        print("2. 로컬 개발 시 config.yaml 파일의 값 확인")
+        print("3. 한국투자증권 API 키/시크릿이 올바른지 확인")
+        raise Exception(f"설정 검증 실패: {e}")
     
     return config
 

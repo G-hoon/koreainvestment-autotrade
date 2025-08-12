@@ -23,22 +23,73 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+
     - name: Setup Google Cloud CLI
       uses: google-github-actions/setup-gcloud@v2
-      with:
-        service_account_key: ${{ secrets.GCP_SA_KEY }}
-        project_id: ${{ secrets.GCP_PROJECT_ID }}
 
     - name: Configure Docker to use gcloud as a credential helper
       run: |
         gcloud auth configure-docker
+        
+    - name: Verify authentication
+      run: |
+        gcloud auth list
+        gcloud config list project
+        
+    - name: Test environment variables
+      env:
+        APP_KEY: ${{ secrets.APP_KEY }}
+        APP_SECRET: ${{ secrets.APP_SECRET }}
+        CANO: ${{ secrets.CANO }}
+        ACNT_PRDT_CD: ${{ secrets.ACNT_PRDT_CD }}
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        URL_BASE: "https://openapi.koreainvestment.com:9443"
+      run: |
+        python test_env.py
+        
+    - name: Debug environment variables
+      run: |
+        echo "🔍 환경변수 디버깅..."
+        echo "PROJECT_ID: $PROJECT_ID"
+        echo "SERVICE_NAME: $SERVICE_NAME"
+        echo "REGION: $REGION"
+        
+        # 민감하지 않은 정보만 표시
+        echo "🔑 설정된 환경변수 확인:"
+        echo "APP_KEY 설정됨: $([ -n '${{ secrets.APP_KEY }}' ] && echo 'YES' || echo 'NO')"
+        echo "APP_SECRET 설정됨: $([ -n '${{ secrets.APP_SECRET }}' ] && echo 'YES' || echo 'NO')"
+        echo "CANO 설정됨: $([ -n '${{ secrets.CANO }}' ] && echo 'YES' || echo 'NO')"
+        echo "ACNT_PRDT_CD 설정됨: $([ -n '${{ secrets.ACNT_PRDT_CD }}' ] && echo 'YES' || echo 'NO')"
+        echo "DISCORD_WEBHOOK_URL 설정됨: $([ -n '${{ secrets.DISCORD_WEBHOOK_URL }}' ] && echo 'YES' || echo 'NO')"
+        echo "GCP_PROJECT_ID 설정됨: $([ -n '${{ secrets.GCP_PROJECT_ID }}' ] && echo 'YES' || echo 'NO')"
+        echo "GCP_SA_KEY 설정됨: $([ -n '${{ secrets.GCP_SA_KEY }}' ] && echo 'YES' || echo 'NO')"
+        
+        # 환경변수 길이 확인 (값은 숨김)
+        echo "📏 환경변수 길이 확인:"
+        echo "APP_KEY 길이: $(echo '${{ secrets.APP_KEY }}' | wc -c)"
+        echo "APP_SECRET 길이: $(echo '${{ secrets.APP_SECRET }}' | wc -c)"
+        echo "CANO 길이: $(echo '${{ secrets.CANO }}' | wc -c)"
+        echo "ACNT_PRDT_CD 길이: $(echo '${{ secrets.ACNT_PRDT_CD }}' | wc -c)"
+        echo "GCP_SA_KEY 길이: $(echo '${{ secrets.GCP_SA_KEY }}' | wc -c)"
+
+    - name: Enable required APIs
+      run: |
+        gcloud services enable cloudbuild.googleapis.com
+        gcloud services enable run.googleapis.com
+        gcloud services enable containerregistry.googleapis.com
 
     - name: Build and push Docker image
       run: |
         # Docker 이미지 빌드 및 푸시
         gcloud builds submit \
           --config cloudbuild.yaml \
-          --substitutions _PROJECT_ID=$PROJECT_ID
+          --substitutions _PROJECT_ID=$PROJECT_ID \
+          --timeout=20m
 
     - name: Deploy to Cloud Run
       run: |
