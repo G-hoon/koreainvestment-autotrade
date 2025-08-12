@@ -50,7 +50,50 @@ jobs:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         URL_BASE: "https://openapi.koreainvestment.com:9443"
       run: |
-        python test_env.py
+        # 현재 디렉토리와 파일 확인
+        echo "📁 현재 디렉토리: $(pwd)"
+        echo "📄 파일 목록:"
+        ls -la
+        
+        # test_env.py 파일이 있는지 확인
+        if [ -f "test_env.py" ]; then
+          echo "✅ test_env.py 파일 존재 - 환경변수 테스트 실행"
+          python test_env.py
+        else
+          echo "⚠️ test_env.py 파일 없음 - 간단한 환경변수 검증 실행"
+          python -c "
+import os
+import sys
+
+print('🔍 환경변수 간단 검증')
+print('=' * 40)
+
+vars_to_check = ['APP_KEY', 'APP_SECRET', 'CANO', 'ACNT_PRDT_CD', 'URL_BASE']
+optional_vars = ['DISCORD_WEBHOOK_URL']
+
+all_set = True
+for var in vars_to_check:
+    value = os.getenv(var)
+    if value:
+        print(f'✅ {var}: 설정됨 (길이: {len(value)}자)')
+    else:
+        print(f'❌ {var}: 설정되지 않음')
+        all_set = False
+
+for var in optional_vars:
+    value = os.getenv(var)
+    if value:
+        print(f'✅ {var}: 설정됨 (길이: {len(value)}자)')
+    else:
+        print(f'⚠️  {var}: 설정되지 않음 (선택사항)')
+
+if all_set:
+    print('🎉 필수 환경변수 모두 설정됨!')
+else:
+    print('❌ 필수 환경변수 누락')
+    sys.exit(1)
+"
+        fi
         
     - name: Debug environment variables
       run: |
@@ -75,7 +118,43 @@ jobs:
         echo "APP_SECRET 길이: $(echo '${{ secrets.APP_SECRET }}' | wc -c)"
         echo "CANO 길이: $(echo '${{ secrets.CANO }}' | wc -c)"
         echo "ACNT_PRDT_CD 길이: $(echo '${{ secrets.ACNT_PRDT_CD }}' | wc -c)"
+        echo "DISCORD_WEBHOOK_URL 길이: $(echo '${{ secrets.DISCORD_WEBHOOK_URL }}' | wc -c)"
         echo "GCP_SA_KEY 길이: $(echo '${{ secrets.GCP_SA_KEY }}' | wc -c)"
+        
+        # 환경변수 길이 검증
+        echo "🔍 환경변수 길이 검증:"
+        APP_KEY_LEN=$(echo '${{ secrets.APP_KEY }}' | wc -c)
+        APP_SECRET_LEN=$(echo '${{ secrets.APP_SECRET }}' | wc -c)
+        CANO_LEN=$(echo '${{ secrets.CANO }}' | wc -c)
+        ACNT_PRDT_CD_LEN=$(echo '${{ secrets.ACNT_PRDT_CD }}' | wc -c)
+        
+        # APP_KEY 검증 (20-50자)
+        if [ $APP_KEY_LEN -ge 20 ] && [ $APP_KEY_LEN -le 50 ]; then
+          echo "✅ APP_KEY: 길이 정상 (${APP_KEY_LEN}자)"
+        else
+          echo "❌ APP_KEY: 길이 비정상 (${APP_KEY_LEN}자, 예상: 20-50자)"
+        fi
+        
+        # APP_SECRET 검증 (30-100자)
+        if [ $APP_SECRET_LEN -ge 30 ] && [ $APP_SECRET_LEN -le 100 ]; then
+          echo "✅ APP_SECRET: 길이 정상 (${APP_SECRET_LEN}자)"
+        else
+          echo "❌ APP_SECRET: 길이 비정상 (${APP_SECRET_LEN}자, 예상: 30-100자)"
+        fi
+        
+        # CANO 검증 (8-15자)
+        if [ $CANO_LEN -ge 8 ] && [ $CANO_LEN -le 15 ]; then
+          echo "✅ CANO: 길이 정상 (${CANO_LEN}자)"
+        else
+          echo "❌ CANO: 길이 비정상 (${CANO_LEN}자, 예상: 8-15자)"
+        fi
+        
+        # ACNT_PRDT_CD 검증 (2-5자)
+        if [ $ACNT_PRDT_CD_LEN -ge 2 ] && [ $ACNT_PRDT_CD_LEN -le 5 ]; then
+          echo "✅ ACNT_PRDT_CD: 길이 정상 (${ACNT_PRDT_CD_LEN}자)"
+        else
+          echo "❌ ACNT_PRDT_CD: 길이 비정상 (${ACNT_PRDT_CD_LEN}자, 예상: 2-5자)"
+        fi
 
     - name: Enable required APIs
       run: |
