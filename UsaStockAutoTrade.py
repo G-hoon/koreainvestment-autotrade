@@ -57,7 +57,7 @@ def load_config():
     print(f"🔑 {config_source}에서 로드한 설정을 검증하는 중...")
     try:
         validate_config_value('APP_KEY', config.get('APP_KEY'), str, 20, 50)
-        validate_config_value('APP_SECRET', config.get('APP_SECRET'), str, 30, 100)
+        validate_config_value('APP_SECRET', config.get('APP_SECRET'), str, 30, 200)
         validate_config_value('CANO', config.get('CANO'), str, 8, 15)
         validate_config_value('ACNT_PRDT_CD', config.get('ACNT_PRDT_CD'), str, 2, 5)
         validate_config_value('URL_BASE', config.get('URL_BASE'), str, 10, 100)
