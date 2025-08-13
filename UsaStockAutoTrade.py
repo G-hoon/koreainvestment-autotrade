@@ -9,6 +9,78 @@ import math
 import os
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import subprocess
+
+def get_version_info():
+    """버전 정보와 배포 날짜 가져오기"""
+    try:
+        # Git 커밋 해시와 날짜 가져오기
+        commit_hash = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], 
+                                            stderr=subprocess.DEVNULL).decode('utf-8').strip()
+        commit_date = subprocess.check_output(['git', 'log', '-1', '--format=%cd', '--date=format:%Y-%m-%d %H:%M:%S'], 
+                                            stderr=subprocess.DEVNULL).decode('utf-8').strip()
+        return f"🚀 버전: {commit_hash} | 배포일: {commit_date}"
+    except:
+        # Git 정보를 가져올 수 없는 경우 현재 시간 사용
+        current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return f"🚀 배포일: {current_time}"
+
+def get_stock_balance_quiet():
+    """주식 잔고조회 (메시지 전송 없이)"""
+    PATH = "uapi/overseas-stock/v1/trading/inquire-balance"
+    URL = f"{URL_BASE}/{PATH}"
+    headers = {"Content-Type":"application/json", 
+        "authorization":f"Bearer {ACCESS_TOKEN}",
+        "appKey":APP_KEY,
+        "appSecret":APP_SECRET,
+        "tr_id":"JTTT3012R",
+        "custtype":"P"
+    }
+    params = {
+        "CANO": CANO,
+        "ACNT_PRDT_CD": ACNT_PRDT_CD,
+        "OVRS_EXCG_CD": "NASD",
+        "TR_CRCY_CD": "USD",
+        "CTX_AREA_FK200": "",
+        "CTX_AREA_NK200": ""
+    }
+    res = session.get(URL, headers=headers, params=params, timeout=30)
+    stock_list = res.json()['output1']
+    evaluation = res.json()['output2']
+    stock_dict = {}
+    for stock in stock_list:
+        if int(stock['ovrs_cblc_qty']) > 0:
+            stock_dict[stock['ovrs_pdno']] = {
+                'qty': stock['ovrs_cblc_qty'],
+                'name': stock['ovrs_item_name']
+            }
+    return stock_dict, evaluation
+
+def send_balance_info():
+    """잔고 정보를 Discord로 전송"""
+    try:
+        # 현금 잔고 정보
+        cash_balance = get_balance()
+        exchange_rate = get_exchange_rate()
+        usd_balance = cash_balance / exchange_rate
+        
+        send_message("💰 ===== 계좌 정보 =====", force_discord=True)
+        send_message(f"💵 현금 잔고: ₩{cash_balance:,.0f} (${usd_balance:,.2f})", force_discord=True)
+        
+        # 보유 주식 정보
+        stock_dict, evaluation = get_stock_balance_quiet()
+        if stock_dict:
+            send_message("📈 보유 종목:", force_discord=True)
+            for symbol, info in stock_dict.items():
+                send_message(f"  • {info['name']}({symbol}): {info['qty']}주", force_discord=True)
+            send_message(f"💎 주식 평가 금액: ${evaluation['tot_evlu_pfls_amt']}", force_discord=True)
+            send_message(f"📊 평가 손익: ${evaluation['ovrs_tot_pfls']}", force_discord=True)
+        else:
+            send_message("📈 보유 종목: 없음", force_discord=True)
+        
+        send_message("========================", force_discord=True)
+    except Exception as e:
+        send_message(f"❌ 잔고 정보 조회 오류: {str(e)}", force_discord=True)
 
 # 환경변수 우선, config.yaml 파일을 백업으로 사용
 def validate_config_value(key, value, expected_type=str, min_length=None, max_length=None):
@@ -575,9 +647,16 @@ try:
 
     # 초기 메시지는 한 번만 전송 (Discord에도 전송)
     if not daily_message_sent:
+        # 버전 정보 가져오기
+        version_info = get_version_info()
+        
         send_message("===해외 주식 자동매매 프로그램을 시작합니다===", force_discord=True)
+        send_message(version_info, force_discord=True)
         send_message(f"목표 매수 종목 수: {target_buy_count}, 종목당 투자 비율: {buy_percent:.0%}", force_discord=True)
         send_message(f"위험관리: 손절매 -5%, 이익실현 +10%, 트레일링스탑 -2%", force_discord=True)
+        
+        # 현재 잔고 및 보유 종목 정보 전송
+        send_balance_info()
         
         # 모든 종목의 목표가를 한 번에 계산하고 메시지 전송
         for sym in symbol_list:
