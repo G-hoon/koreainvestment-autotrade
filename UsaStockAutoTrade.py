@@ -201,9 +201,19 @@ def get_access_token():
     "appsecret":APP_SECRET}
     PATH = "oauth2/tokenP"
     URL = f"{URL_BASE}/{PATH}"
-    res = session.post(URL, headers=headers, data=json.dumps(body), timeout=30)
-    ACCESS_TOKEN = res.json()["access_token"]
-    return ACCESS_TOKEN
+    try:
+        res = session.post(URL, headers=headers, data=json.dumps(body), timeout=30)
+        result = res.json()
+        
+        if 'access_token' in result:
+            return result["access_token"]
+        else:
+            send_message(f"❌ 토큰 발급 실패: access_token 없음 - {result}", force_discord=True)
+            raise Exception(f"토큰 응답에 access_token 없음: {result}")
+            
+    except Exception as e:
+        send_message(f"❌ API 토큰 발급 오류: {str(e)}", force_discord=True)
+        raise
     
 def hashkey(datas):
     """암호화"""
