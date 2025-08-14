@@ -128,6 +128,66 @@ gcloud run services update koreainvestment-autotrade \
 
 ---
 
+## ⏰ 자동 실행 스케줄러 설정
+
+### Cloud Scheduler로 미국 장시간 자동 실행
+
+미국 장 시작시간(9:30 EST)에 자동으로 프로그램을 실행하도록 설정할 수 있습니다.
+
+#### 1. Cloud Scheduler API 활성화
+```bash
+# Cloud Scheduler API 활성화
+gcloud services enable cloudscheduler.googleapis.com
+```
+
+#### 2. 스케줄러 작업 생성
+```bash
+# 매일 평일 9:30 EST에 자동 실행
+gcloud scheduler jobs create http usa-trading-scheduler \
+  --schedule="30 14 * * 1-5" \
+  --uri="https://your-cloud-run-url/" \
+  --http-method=GET \
+  --time-zone="America/New_York" \
+  --location="us-central1" \
+  --description="미국 장 시작시간(9:30 EST)에 자동매매 실행"
+```
+
+#### 3. 스케줄 설명
+- `30 14 * * 1-5`: 매일 평일(월~금) 14:30 UTC (= 9:30 EST)
+- `time-zone="America/New_York"`: EST/EDT 자동 적용
+- 프로그램은 15:50 EST에 자동으로 종료됩니다
+
+#### 4. 스케줄러 관리
+```bash
+# 스케줄러 목록 확인
+gcloud scheduler jobs list --location=us-central1
+
+# 스케줄러 일시 중지
+gcloud scheduler jobs pause usa-trading-scheduler --location=us-central1
+
+# 스케줄러 재시작
+gcloud scheduler jobs resume usa-trading-scheduler --location=us-central1
+
+# 스케줄러 삭제
+gcloud scheduler jobs delete usa-trading-scheduler --location=us-central1
+```
+
+#### 5. 수동 실행 테스트
+```bash
+# 스케줄러 즉시 실행 (테스트용)
+gcloud scheduler jobs run usa-trading-scheduler --location=us-central1
+```
+
+### Discord 알림 기능
+
+프로그램이 시작하고 종료할 때 Discord로 알림을 받을 수 있습니다:
+
+- **장 시작 시**: 잔고 정보, 보유 종목, 평가 손익 표시
+- **장 종료 시**: 최종 잔고 및 수익률 결과 표시
+- **실시간**: 매수/매도 체결 내역, 위험관리 알림
+
+---
+
 ## 🔄 업데이트 및 재배포
 
 ### 코드 변경 후 재배포

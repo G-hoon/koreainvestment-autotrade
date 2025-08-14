@@ -777,7 +777,10 @@ try:
                 time.sleep(1)
                 
         if t_exit < t_now:  # PM 03:50 ~ :프로그램 종료
-            send_message("프로그램을 종료합니다.", force_discord=True)
+            # 장 종료 전 최종 잔고 정보 전송
+            send_message("📊 ===== 장 마감 결과 =====", force_discord=True)
+            send_balance_info()
+            send_message("🔔 미국 장시간이 종료되었습니다. 프로그램을 종료합니다.", force_discord=True)
             break
             
         time.sleep(5)  # 5초 대기
