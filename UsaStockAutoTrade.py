@@ -631,7 +631,7 @@ def is_market_open():
 try:
     ACCESS_TOKEN = get_access_token()
 
-    nasd_symbol_list = ["PLTR", "AVGO", "LRCX", "NVDA", "AAPL", "MU", "LYFT", "MSFT", "AMD"] # 매수 희망 종목 리스트 (NASD)
+    nasd_symbol_list = ['TSLA', 'QCOM', 'SBUX', 'MSFT', 'INTC', 'LRCX', 'TXN', 'AVGO', 'AAPL', 'LYFT', 'MU', 'CSCO', 'MRVL', 'NVDA', 'AMZN'] # 매수 희망 종목 리스트 (NASD)
     nyse_symbol_list = [] 
     amex_symbol_list = [] 
     symbol_list = nasd_symbol_list + nyse_symbol_list + amex_symbol_list
