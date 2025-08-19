@@ -142,20 +142,20 @@ gcloud services enable cloudscheduler.googleapis.com
 
 #### 2. 스케줄러 작업 생성
 ```bash
-# 매일 평일 9:30 EST에 자동 실행
+# 매일 평일 9:30 EST/EDT에 자동 실행
 gcloud scheduler jobs create http usa-trading-scheduler \
-  --schedule="30 14 * * 1-5" \
+  --schedule="30 9 * * 1-5" \
   --uri="https://your-cloud-run-url/" \
   --http-method=GET \
   --time-zone="America/New_York" \
   --location="us-central1" \
-  --description="미국 장 시작시간(9:30 EST)에 자동매매 실행"
+  --description="미국 장 시작시간(9:30 EST/EDT)에 자동매매 실행"
 ```
 
 #### 3. 스케줄 설명
-- `30 14 * * 1-5`: 매일 평일(월~금) 14:30 UTC (= 9:30 EST)
-- `time-zone="America/New_York"`: EST/EDT 자동 적용
-- 프로그램은 15:50 EST에 자동으로 종료됩니다
+- `30 9 * * 1-5`: 매일 평일(월~금) 9:30 AM America/New_York 시간대
+- `time-zone="America/New_York"`: EST/EDT 자동 적용 (서머타임 자동 처리)
+- 프로그램은 4:00 PM EST/EDT에 자동으로 종료됩니다
 
 #### 4. 스케줄러 관리
 ```bash
